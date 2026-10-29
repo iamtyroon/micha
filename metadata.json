@@ -1,0 +1,6 @@
+{
+  "name": "AERC Rally Control — Esports Championship & Driver Profile Platform",
+  "description": "Official telemetry, results automation, and career profile platform for the African Esports Rally Championship (AERC) run by Sim Racing Kenya on EA Sports WRC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
