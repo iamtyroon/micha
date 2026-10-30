@@ -1,0 +1,304 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'imtyroon@gmail.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'organizer')
+      );
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'username', 'earcUsername',
+          'onboardingCompleted', 'hasPasswordSet', 'photoURL', 'role', 'driverId', 'teamId', 'updatedAt'
+        ]) &&
+        data.uid == request.auth.uid &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 254 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+        (!('username' in data) || data.username == null || (data.username is string && data.username.size() <= 64)) &&
+        (!('earcUsername' in data) || data.earcUsername == null || (data.earcUsername is string && data.earcUsername.size() <= 100)) &&
+        (!('onboardingCompleted' in data) || data.onboardingCompleted == null || data.onboardingCompleted is bool) &&
+        (!('hasPasswordSet' in data) || data.hasPasswordSet == null || data.hasPasswordSet is bool) &&
+        (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 500)) &&
+        data.role is string && data.role.size() <= 32 && data.role in ['organizer', 'manager', 'driver'] &&
+        (!('driverId' in data) || data.driverId == null || (data.driverId is string && data.driverId.size() <= 128)) &&
+        (!('teamId' in data) || data.teamId == null || (data.teamId is string && data.teamId.size() <= 128)) &&
+        data.updatedAt is string && data.updatedAt.size() >= 1 && data.updatedAt.size() <= 64;
+    }
+
+    function isValidDriverPublic(data) {
+      return data.keys().hasAll([
+          'id', 'firstName', 'lastName', 'fullName', 'racenetName', 'racenetAliases',
+          'teamPointsOptIn', 'carMakeModel', 'nationality', 'countryCode',
+          'countryOfResidence', 'platform', 'controls', 'claimedAccount',
+          'avatarColor', 'number', 'carHistory'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'firstName', 'lastName', 'fullName', 'racenetName', 'eaAccountId',
+          'racenetAliases', 'teamId', 'teamPointsOptIn', 'carMakeModel',
+          'nationality', 'countryCode', 'countryOfResidence', 'platform',
+          'controls', 'claimedAccount', 'claimedByUid', 'avatarColor', 'number', 'carHistory'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.firstName is string && data.firstName.size() >= 1 && data.firstName.size() <= 80 &&
+        data.lastName is string && data.lastName.size() >= 1 && data.lastName.size() <= 80 &&
+        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 160 &&
+        data.racenetName is string && data.racenetName.size() >= 1 && data.racenetName.size() <= 100 &&
+        (!('eaAccountId' in data) || data.eaAccountId == null || (data.eaAccountId is string && data.eaAccountId.size() <= 100)) &&
+        data.racenetAliases is list && data.racenetAliases.size() <= 10 &&
+        (data.racenetAliases.size() == 0 || (data.racenetAliases[0] is string && data.racenetAliases[0].size() <= 100)) &&
+        (!('teamId' in data) || data.teamId == null || (data.teamId is string && data.teamId.size() <= 128)) &&
+        data.teamPointsOptIn is bool &&
+        data.carMakeModel is string && data.carMakeModel.size() >= 1 && data.carMakeModel.size() <= 120 &&
+        data.nationality is string && data.nationality.size() >= 1 && data.nationality.size() <= 80 &&
+        data.countryCode is string && data.countryCode.size() >= 1 && data.countryCode.size() <= 8 &&
+        data.countryOfResidence is string && data.countryOfResidence.size() >= 1 && data.countryOfResidence.size() <= 80 &&
+        data.platform is string && data.platform.size() <= 32 && data.platform in ['PC', 'PlayStation', 'Xbox'] &&
+        data.controls is string && data.controls.size() <= 32 && data.controls in ['Wheel & Pedals', 'Controller', 'Keyboard'] &&
+        data.claimedAccount is bool &&
+        (!('claimedByUid' in data) || data.claimedByUid == null || (data.claimedByUid is string && data.claimedByUid.size() <= 128)) &&
+        data.avatarColor is string && data.avatarColor.size() >= 1 && data.avatarColor.size() <= 32 &&
+        data.number is string && data.number.size() >= 1 && data.number.size() <= 16 &&
+        data.carHistory is list && data.carHistory.size() <= 20 &&
+        (data.carHistory.size() == 0 || data.carHistory[0] is map);
+    }
+
+    function isValidDriverPrivateVault(data) {
+      return data.keys().hasAll([
+          'driverId', 'ownerUid', 'email', 'phone', 'age', 'gender',
+          'isMinor', 'parentalConsentVerified', 'consentTimestamp', 'dataProtectionActAccepted'
+        ]) &&
+        data.keys().hasOnly([
+          'driverId', 'ownerUid', 'email', 'phone', 'age', 'gender',
+          'isMinor', 'parentalConsentVerified', 'consentTimestamp', 'dataProtectionActAccepted'
+        ]) &&
+        data.driverId is string && data.driverId.size() >= 1 && data.driverId.size() <= 128 && data.driverId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerUid is string && data.ownerUid.size() <= 128 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 254 &&
+        data.phone is string && data.phone.size() >= 3 && data.phone.size() <= 64 &&
+        data.age is number && data.age >= 12 && data.age <= 90 &&
+        data.gender is string && data.gender.size() <= 32 && data.gender in ['Male', 'Female', 'Non-binary', 'Prefer not to say'] &&
+        data.isMinor is bool &&
+        data.parentalConsentVerified is bool &&
+        data.consentTimestamp is string && data.consentTimestamp.size() >= 1 && data.consentTimestamp.size() <= 64 &&
+        data.dataProtectionActAccepted is bool && data.dataProtectionActAccepted == true;
+    }
+
+    function isValidTeam(data) {
+      return data.keys().hasAll([
+          'id', 'name', 'shortCode', 'managerName', 'managerEmail',
+          'countryCode', 'liveryColor', 'driverIds', 'activeForTeamChampionship'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'name', 'shortCode', 'managerName', 'managerEmail', 'managerUid',
+          'countryCode', 'liveryColor', 'driverIds', 'activeForTeamChampionship'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.shortCode is string && data.shortCode.size() >= 1 && data.shortCode.size() <= 8 &&
+        data.managerName is string && data.managerName.size() >= 1 && data.managerName.size() <= 120 &&
+        data.managerEmail is string && data.managerEmail.size() >= 3 && data.managerEmail.size() <= 254 &&
+        (!('managerUid' in data) || data.managerUid == null || (data.managerUid is string && data.managerUid.size() <= 128)) &&
+        data.countryCode is string && data.countryCode.size() >= 1 && data.countryCode.size() <= 8 &&
+        data.liveryColor is string && data.liveryColor.size() >= 1 && data.liveryColor.size() <= 32 &&
+        data.driverIds is list && data.driverIds.size() <= 3 &&
+        (data.driverIds.size() == 0 || (data.driverIds[0] is string && data.driverIds[0].size() <= 128)) &&
+        data.activeForTeamChampionship is bool;
+    }
+
+    function isValidRallyRound(data) {
+      return data.keys().hasAll([
+          'id', 'roundNumber', 'name', 'country', 'countryCode', 'surface',
+          'startDate', 'endDate', 'entryDeadline', 'status', 'stagesCount',
+          'totalDistanceKm', 'registeredDriverIds', 'results', 'racenetClubEventId'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'roundNumber', 'name', 'country', 'countryCode', 'surface',
+          'startDate', 'endDate', 'entryDeadline', 'status', 'stagesCount',
+          'totalDistanceKm', 'registeredDriverIds', 'results', 'racenetClubEventId', 'publishedAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.roundNumber is number && data.roundNumber >= 1 && data.roundNumber <= 100 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 140 &&
+        data.country is string && data.country.size() >= 1 && data.country.size() <= 80 &&
+        data.countryCode is string && data.countryCode.size() >= 1 && data.countryCode.size() <= 8 &&
+        data.surface is string && data.surface.size() <= 32 && data.surface in ['Gravel', 'Asphalt', 'Mixed', 'Safari Gravel'] &&
+        data.startDate is string && data.startDate.size() >= 1 && data.startDate.size() <= 32 &&
+        data.endDate is string && data.endDate.size() >= 1 && data.endDate.size() <= 32 &&
+        data.entryDeadline is string && data.entryDeadline.size() >= 1 && data.entryDeadline.size() <= 32 &&
+        data.status is string && data.status.size() <= 32 && data.status in ['Completed', 'Registration Open', 'In Progress', 'Upcoming'] &&
+        data.stagesCount is number && data.stagesCount >= 1 && data.stagesCount <= 100 &&
+        data.totalDistanceKm is number && data.totalDistanceKm >= 1 && data.totalDistanceKm <= 5000 &&
+        data.registeredDriverIds is list && data.registeredDriverIds.size() <= 200 &&
+        (data.registeredDriverIds.size() == 0 || (data.registeredDriverIds[0] is string && data.registeredDriverIds[0].size() <= 128)) &&
+        data.results is list && data.results.size() <= 200 &&
+        (data.results.size() == 0 || data.results[0] is map) &&
+        data.racenetClubEventId is string && data.racenetClubEventId.size() >= 1 && data.racenetClubEventId.size() <= 80 &&
+        (!('publishedAt' in data) || data.publishedAt == null || (data.publishedAt is string && data.publishedAt.size() <= 64));
+    }
+
+    function isValidChampionshipSettings(data) {
+      return data.keys().hasAll([
+          'id', 'positionPoints', 'powerStagePoints',
+          'droppedRoundsCount', 'maxDriversPerTeam', 'scoringDriversPerTeamRound'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'positionPoints', 'powerStagePoints',
+          'droppedRoundsCount', 'maxDriversPerTeam', 'scoringDriversPerTeamRound'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.positionPoints is list && data.positionPoints.size() <= 20 &&
+        (data.positionPoints.size() == 0 || data.positionPoints[0] is number) &&
+        data.powerStagePoints is list && data.powerStagePoints.size() <= 10 &&
+        (data.powerStagePoints.size() == 0 || data.powerStagePoints[0] is number) &&
+        data.droppedRoundsCount is number && data.droppedRoundsCount >= 0 && data.droppedRoundsCount <= 5 &&
+        data.maxDriversPerTeam is number && data.maxDriversPerTeam >= 1 && data.maxDriversPerTeam <= 5 &&
+        data.scoringDriversPerTeamRound is number && data.scoringDriversPerTeamRound >= 1 && data.scoringDriversPerTeamRound <= 5;
+    }
+
+    function isValidTeamRequest(data) {
+      return data.keys().hasAll([
+          'id', 'teamId', 'teamName', 'teamShortCode', 'managerName',
+          'driverId', 'driverName', 'driverRacenet', 'direction',
+          'status', 'messages', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'teamId', 'teamName', 'teamShortCode', 'managerName',
+          'driverId', 'driverName', 'driverRacenet', 'direction',
+          'status', 'messages', 'createdAt', 'updatedAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.teamId is string && data.teamId.size() >= 1 && data.teamId.size() <= 128 &&
+        data.teamName is string && data.teamName.size() >= 1 && data.teamName.size() <= 120 &&
+        data.teamShortCode is string && data.teamShortCode.size() >= 1 && data.teamShortCode.size() <= 8 &&
+        data.managerName is string && data.managerName.size() >= 1 && data.managerName.size() <= 120 &&
+        data.driverId is string && data.driverId.size() >= 1 && data.driverId.size() <= 128 &&
+        data.driverName is string && data.driverName.size() >= 1 && data.driverName.size() <= 160 &&
+        data.driverRacenet is string && data.driverRacenet.size() >= 1 && data.driverRacenet.size() <= 100 &&
+        data.direction is string && data.direction.size() <= 32 && data.direction in ['manager_invite', 'driver_request'] &&
+        data.status is string && data.status.size() <= 32 && data.status in ['pending', 'accepted', 'declined'] &&
+        data.messages is list && data.messages.size() <= 50 &&
+        (data.messages.size() == 0 || data.messages[0] is map) &&
+        data.createdAt is string && data.createdAt.size() >= 1 && data.createdAt.size() <= 64 &&
+        data.updatedAt is string && data.updatedAt.size() >= 1 && data.updatedAt.size() <= 64;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(userId) && request.auth.uid == userId && isValidUserProfile(incoming());
+      allow update: if isVerifiedUser() && isValidId(userId) && request.auth.uid == userId && isValidUserProfile(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'username', 'earcUsername', 'onboardingCompleted',
+          'hasPasswordSet', 'photoURL', 'role', 'driverId', 'teamId', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+    }
+
+    match /drivers/{driverId} {
+      allow get: if isValidId(driverId);
+      allow list: if true;
+      allow create: if isSignedIn() && isValidId(driverId) && incoming().id == driverId && isValidDriverPublic(incoming());
+      allow update: if isSignedIn() && isValidId(driverId) && isValidDriverPublic(incoming()) &&
+        incoming().id == existing().id && (
+          isAdmin() ||
+          (incoming().diff(existing()).affectedKeys().hasOnly([
+            'firstName', 'lastName', 'fullName', 'racenetName', 'eaAccountId',
+            'claimedAccount', 'claimedByUid', 'racenetAliases', 'teamId',
+            'teamPointsOptIn', 'carMakeModel', 'nationality', 'countryCode',
+            'countryOfResidence', 'platform', 'controls', 'carHistory'
+          ]))
+        );
+      allow delete: if isSignedIn() && isValidId(driverId) && (isAdmin() || resource.data.claimedByUid == request.auth.uid);
+    }
+
+    match /privateVault/{driverId} {
+      allow get: if isSignedIn() && isValidId(driverId) && (resource.data.ownerUid == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(driverId) && incoming().driverId == driverId && isValidDriverPrivateVault(incoming());
+      allow update: if isVerifiedUser() && isValidId(driverId) && isValidDriverPrivateVault(incoming()) &&
+        incoming().driverId == existing().driverId &&
+        (existing().ownerUid == request.auth.uid || isAdmin()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['email', 'phone', 'age', 'parentalConsentVerified', 'consentTimestamp']);
+      allow delete: if isSignedIn() && isValidId(driverId) && (resource.data.ownerUid == request.auth.uid || isAdmin());
+    }
+
+    match /teams/{teamId} {
+      allow get: if isValidId(teamId);
+      allow list: if true;
+      allow create: if isSignedIn() && isValidId(teamId) && incoming().id == teamId && isValidTeam(incoming());
+      allow update: if isSignedIn() && isValidId(teamId) && isValidTeam(incoming()) &&
+        incoming().id == existing().id && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'shortCode', 'driverIds', 'managerName', 'managerEmail', 'activeForTeamChampionship'])
+        );
+      allow delete: if isSignedIn() && isValidId(teamId) && (isAdmin() || resource.data.managerUid == request.auth.uid);
+    }
+
+    match /rounds/{roundId} {
+      allow get: if isValidId(roundId);
+      allow list: if true;
+      allow create: if isSignedIn() && isValidId(roundId) && incoming().id == roundId && isValidRallyRound(incoming());
+      allow update: if isSignedIn() && isValidId(roundId) && isValidRallyRound(incoming()) &&
+        incoming().id == existing().id && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['registeredDriverIds', 'results', 'status', 'publishedAt'])
+        );
+      allow delete: if isAdmin() && isValidId(roundId);
+    }
+
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId);
+      allow list: if true;
+      allow create: if isSignedIn() && isValidId(settingId) && incoming().id == settingId && isValidChampionshipSettings(incoming());
+      allow update: if isSignedIn() && isValidId(settingId) && isValidChampionshipSettings(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['positionPoints', 'powerStagePoints', 'droppedRoundsCount', 'maxDriversPerTeam', 'scoringDriversPerTeamRound']);
+      allow delete: if isAdmin() && isValidId(settingId);
+    }
+
+    match /teamRequests/{requestId} {
+      allow get: if isValidId(requestId);
+      allow list: if true;
+      allow create: if isSignedIn() && isValidId(requestId) && incoming().id == requestId && isValidTeamRequest(incoming());
+      allow update: if isSignedIn() && isValidId(requestId) && isValidTeamRequest(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().teamId == existing().teamId &&
+        incoming().driverId == existing().driverId &&
+        incoming().direction == existing().direction &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'messages', 'updatedAt']);
+      allow delete: if isSignedIn() && isValidId(requestId);
+    }
+  }
+}

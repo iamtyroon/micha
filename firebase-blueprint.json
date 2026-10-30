@@ -1,0 +1,603 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user account with role assignment (organizer, manager, or driver) and EA Racenet / AERC organizer onboarding fields.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the user."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254,
+          "description": "Authenticated Google email address."
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "User full name."
+        },
+        "username": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "AERC platform username."
+        },
+        "earcUsername": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "EA Racenet / AERC account username for API lookup and migration."
+        },
+        "onboardingCompleted": {
+          "type": "boolean",
+          "description": "Whether the user has completed role onboarding."
+        },
+        "hasPasswordSet": {
+          "type": "boolean",
+          "description": "Whether the user has configured an account password in settings."
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "User avatar URL from Google."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["organizer", "manager", "driver"],
+          "maxLength": 32,
+          "description": "Selected account role in the AERC platform."
+        },
+        "driverId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Linked persistent driver ID if claimed."
+        },
+        "teamId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Linked team ID if managing or driving for a team."
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "ISO timestamp of last profile update."
+        }
+      },
+      "required": ["uid", "email", "displayName", "role", "updatedAt"]
+    },
+    "DriverPublic": {
+      "title": "DriverPublic",
+      "description": "Public championship driver profile and telemetry configuration.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Persistent Driver ID."
+        },
+        "firstName": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Driver first name."
+        },
+        "lastName": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Driver last name."
+        },
+        "fullName": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Driver full display name."
+        },
+        "racenetName": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "EA Racenet display name."
+        },
+        "eaAccountId": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Optional EA Account ID for privacy mask bypass."
+        },
+        "racenetAliases": {
+          "type": "array",
+          "maxLength": 10,
+          "description": "Historical EA Racenet aliases."
+        },
+        "teamId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Assigned constructor team ID or empty string."
+        },
+        "teamPointsOptIn": {
+          "type": "boolean",
+          "description": "Whether the driver opts in to score team championship points."
+        },
+        "carMakeModel": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Homologated Rally1 car make and model."
+        },
+        "nationality": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Driver nationality."
+        },
+        "countryCode": {
+          "type": "string",
+          "maxLength": 8,
+          "description": "Two-letter ISO country code."
+        },
+        "countryOfResidence": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Country of residence."
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["PC", "PlayStation", "Xbox"],
+          "maxLength": 32,
+          "description": "Hardware platform."
+        },
+        "controls": {
+          "type": "string",
+          "enum": ["Wheel & Pedals", "Controller", "Keyboard"],
+          "maxLength": 32,
+          "description": "Input controls type."
+        },
+        "claimedAccount": {
+          "type": "boolean",
+          "description": "Whether a driver has claimed this profile."
+        },
+        "claimedByUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "UID of the user who claimed or created the driver profile."
+        },
+        "avatarColor": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Hex badge color."
+        },
+        "number": {
+          "type": "string",
+          "maxLength": 16,
+          "description": "Driver competition car number."
+        },
+        "carHistory": {
+          "type": "array",
+          "maxLength": 20,
+          "description": "List of seasonal car history entries."
+        }
+      },
+      "required": [
+        "id",
+        "firstName",
+        "lastName",
+        "fullName",
+        "racenetName",
+        "racenetAliases",
+        "teamPointsOptIn",
+        "carMakeModel",
+        "nationality",
+        "countryCode",
+        "countryOfResidence",
+        "platform",
+        "controls",
+        "claimedAccount",
+        "avatarColor",
+        "number",
+        "carHistory"
+      ]
+    },
+    "DriverPrivateVault": {
+      "title": "DriverPrivateVault",
+      "description": "Segregated private PII and minor consent record for a driver.",
+      "type": "object",
+      "properties": {
+        "driverId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Persistent Driver ID matching DriverPublic."
+        },
+        "ownerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "UID of the authenticated user who submitted the record."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 254,
+          "description": "Private driver email."
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Private mobile / WhatsApp number."
+        },
+        "age": {
+          "type": "number",
+          "description": "Driver age in years."
+        },
+        "gender": {
+          "type": "string",
+          "enum": ["Male", "Female", "Non-binary", "Prefer not to say"],
+          "maxLength": 32,
+          "description": "Driver gender."
+        },
+        "isMinor": {
+          "type": "boolean",
+          "description": "Whether the driver is under 18."
+        },
+        "parentalConsentVerified": {
+          "type": "boolean",
+          "description": "Whether parental consent was verified for a minor."
+        },
+        "consentTimestamp": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "ISO timestamp when DPA consent was accepted."
+        },
+        "dataProtectionActAccepted": {
+          "type": "boolean",
+          "description": "Whether the Kenya Data Protection Act terms were accepted."
+        }
+      },
+      "required": [
+        "driverId",
+        "ownerUid",
+        "email",
+        "phone",
+        "age",
+        "gender",
+        "isMinor",
+        "parentalConsentVerified",
+        "consentTimestamp",
+        "dataProtectionActAccepted"
+      ]
+    },
+    "Team": {
+      "title": "Team",
+      "description": "Constructor team in the AERC Teams Championship.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique Team ID."
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Constructor team name."
+        },
+        "shortCode": {
+          "type": "string",
+          "maxLength": 8,
+          "description": "3-letter telemetry code."
+        },
+        "managerName": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Team principal name."
+        },
+        "managerEmail": {
+          "type": "string",
+          "maxLength": 254,
+          "description": "Team principal contact email."
+        },
+        "managerUid": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "UID of the user who created/manages the team."
+        },
+        "countryCode": {
+          "type": "string",
+          "maxLength": 8,
+          "description": "Two-letter country code."
+        },
+        "liveryColor": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Hex team livery color."
+        },
+        "driverIds": {
+          "type": "array",
+          "maxLength": 3,
+          "description": "Up to 3 assigned driver IDs."
+        },
+        "activeForTeamChampionship": {
+          "type": "boolean",
+          "description": "Whether active in the Teams Championship."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "shortCode",
+        "managerName",
+        "managerEmail",
+        "countryCode",
+        "liveryColor",
+        "driverIds",
+        "activeForTeamChampionship"
+      ]
+    },
+    "RallyRound": {
+      "title": "RallyRound",
+      "description": "Championship rally round event, entry list, and stage results.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique Round ID."
+        },
+        "roundNumber": {
+          "type": "number",
+          "description": "Sequential round number."
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 140,
+          "description": "Rally round title."
+        },
+        "country": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Host country name."
+        },
+        "countryCode": {
+          "type": "string",
+          "maxLength": 8,
+          "description": "Host country code."
+        },
+        "surface": {
+          "type": "string",
+          "enum": ["Gravel", "Asphalt", "Mixed", "Safari Gravel"],
+          "maxLength": 32,
+          "description": "Primary stage surface."
+        },
+        "startDate": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Event start date."
+        },
+        "endDate": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Event end date."
+        },
+        "entryDeadline": {
+          "type": "string",
+          "maxLength": 32,
+          "description": "Registration closing date."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Completed", "Registration Open", "In Progress", "Upcoming"],
+          "maxLength": 32,
+          "description": "Round lifecycle status."
+        },
+        "stagesCount": {
+          "type": "number",
+          "description": "Number of special stages."
+        },
+        "totalDistanceKm": {
+          "type": "number",
+          "description": "Total competitive distance in km."
+        },
+        "registeredDriverIds": {
+          "type": "array",
+          "maxLength": 200,
+          "description": "Registered driver IDs for this round."
+        },
+        "results": {
+          "type": "array",
+          "maxLength": 200,
+          "description": "Classified stage results for this round."
+        },
+        "racenetClubEventId": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "EA Racenet Club Event identifier."
+        },
+        "publishedAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "ISO timestamp when results were published."
+        }
+      },
+      "required": [
+        "id",
+        "roundNumber",
+        "name",
+        "country",
+        "countryCode",
+        "surface",
+        "startDate",
+        "endDate",
+        "entryDeadline",
+        "status",
+        "stagesCount",
+        "totalDistanceKm",
+        "registeredDriverIds",
+        "results",
+        "racenetClubEventId"
+      ]
+    },
+    "ChampionshipSettings": {
+      "title": "ChampionshipSettings",
+      "description": "Points configuration and dropped rounds settings for the championship.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Settings document ID."
+        },
+        "positionPoints": {
+          "type": "array",
+          "maxLength": 20,
+          "description": "Points awarded per overall finishing position."
+        },
+        "powerStagePoints": {
+          "type": "array",
+          "maxLength": 10,
+          "description": "Bonus points awarded on the Power Stage."
+        },
+        "droppedRoundsCount": {
+          "type": "number",
+          "description": "Number of worst rounds dropped."
+        },
+        "maxDriversPerTeam": {
+          "type": "number",
+          "description": "Maximum drivers allowed on a team roster."
+        },
+        "scoringDriversPerTeamRound": {
+          "type": "number",
+          "description": "Number of top team finishers scoring per round."
+        }
+      },
+      "required": [
+        "id",
+        "positionPoints",
+        "powerStagePoints",
+        "droppedRoundsCount",
+        "maxDriversPerTeam",
+        "scoringDriversPerTeamRound"
+      ]
+    },
+    "TeamRequest": {
+      "title": "TeamRequest",
+      "description": "Team recruitment invitation (manager_invite) or driver join request (driver_request) with embedded communication messages.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique TeamRequest ID."
+        },
+        "teamId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Target constructor team ID."
+        },
+        "teamName": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Target constructor team name."
+        },
+        "teamShortCode": {
+          "type": "string",
+          "maxLength": 8,
+          "description": "Team 3-letter code."
+        },
+        "managerName": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Team manager name."
+        },
+        "driverId": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Target driver ID."
+        },
+        "driverName": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "Target driver full name."
+        },
+        "driverRacenet": {
+          "type": "string",
+          "maxLength": 100,
+          "description": "Target driver EA Racenet name."
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["manager_invite", "driver_request"],
+          "maxLength": 32,
+          "description": "Whether initiated by the team manager or the driver."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "accepted", "declined"],
+          "maxLength": 32,
+          "description": "Current status of the invitation or join request."
+        },
+        "messages": {
+          "type": "array",
+          "maxLength": 50,
+          "description": "Bounded chat thread between the team manager and driver."
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "ISO timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "ISO timestamp of last update."
+        }
+      },
+      "required": [
+        "id",
+        "teamId",
+        "teamName",
+        "teamShortCode",
+        "managerName",
+        "driverId",
+        "driverName",
+        "driverRacenet",
+        "direction",
+        "status",
+        "messages",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Stores authenticated user profiles, their active AERC role, and EA Racenet / AERC organizer onboarding details."
+    },
+    "/drivers/{driverId}": {
+      "schema": { "$ref": "#/entities/DriverPublic" },
+      "description": "Stores public championship driver profiles, cars, and Racenet aliases."
+    },
+    "/privateVault/{driverId}": {
+      "schema": { "$ref": "#/entities/DriverPrivateVault" },
+      "description": "Stores segregated private driver PII (email, phone, age, minor consent) restricted to owner and organizers."
+    },
+    "/teams/{teamId}": {
+      "schema": { "$ref": "#/entities/Team" },
+      "description": "Stores constructor teams and their up-to-3 driver line-ups."
+    },
+    "/rounds/{roundId}": {
+      "schema": { "$ref": "#/entities/RallyRound" },
+      "description": "Stores championship rally rounds, entry lists, and published stage results."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/ChampionshipSettings" },
+      "description": "Stores championship scoring and dropped-round configuration."
+    },
+    "/teamRequests/{requestId}": {
+      "schema": { "$ref": "#/entities/TeamRequest" },
+      "description": "Stores team manager driver invitations, driver team join requests, and team-driver messages."
+    }
+  }
+}
