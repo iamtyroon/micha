@@ -330,6 +330,98 @@ export function calculateTeamStandings(
  * 3. Historical Racenet Alias match
  * 4. Flags remaining "WRC Player" or unknown Racenet names for 1-click Organiser resolution.
  */
+function createRacenetDriverMatcher(drivers: DriverPublic[]) {
+  const exactDrivers = new Map<string, DriverPublic>();
+  const eaIdDrivers = new Map<string, DriverPublic>();
+  const aliasDrivers = new Map<string, DriverPublic>();
+  const fuzzyDrivers = drivers.map((driver) => ({
+    driver,
+    firstName: driver.firstName.toLowerCase(),
+    lastName: driver.lastName.toLowerCase(),
+    racenetName: driver.racenetName.toLowerCase(),
+  }));
+
+  for (const driver of drivers) {
+    const racenetName = driver.racenetName.trim().toLowerCase();
+    if (racenetName && !exactDrivers.has(racenetName)) {
+      exactDrivers.set(racenetName, driver);
+    }
+
+    const eaAccountId = driver.eaAccountId?.trim().toLowerCase();
+    if (eaAccountId && !eaIdDrivers.has(eaAccountId)) {
+      eaIdDrivers.set(eaAccountId, driver);
+    }
+
+    for (const alias of driver.racenetAliases) {
+      const normalizedAlias = alias.trim().toLowerCase();
+      if (normalizedAlias && !aliasDrivers.has(normalizedAlias)) {
+        aliasDrivers.set(normalizedAlias, driver);
+      }
+    }
+  }
+
+  return (rawRacenetName: string, eaAccountId: string | undefined): {
+  matchedDriverId: string | null;
+  matchConfidence: ParsedRacenetRow['matchConfidence'];
+  suggestedDriverId?: string;
+  } => {
+    const normalizedName = rawRacenetName.trim().toLowerCase();
+    const normalizedEaId = eaAccountId?.trim().toLowerCase();
+
+    // 1. Check exact Racenet Name
+    if (normalizedName && normalizedName !== 'wrc player') {
+      const exactDriver = exactDrivers.get(normalizedName);
+      if (exactDriver) {
+        return {
+          matchedDriverId: exactDriver.id,
+          matchConfidence: 'exact_racenet',
+        };
+      }
+    }
+
+    // 2. Check EA Account ID (Crucial when driver has EA privacy sharing off -> "WRC Player")
+    if (normalizedEaId) {
+      const eaIdDriver = eaIdDrivers.get(normalizedEaId);
+      if (eaIdDriver) {
+        return {
+          matchedDriverId: eaIdDriver.id,
+          matchConfidence: 'ea_account_id',
+        };
+      }
+    }
+
+    // 3. Check historical Racenet aliases
+    if (normalizedName && normalizedName !== 'wrc player') {
+      const aliasDriver = aliasDrivers.get(normalizedName);
+      if (aliasDriver) {
+        return {
+          matchedDriverId: aliasDriver.id,
+          matchConfidence: 'alias_match',
+        };
+      }
+    }
+
+    // 4. Unmatched — check if generic "WRC Player" mask or fuzzy suggestion
+    if (normalizedName === 'wrc player') {
+      return {
+        matchedDriverId: null,
+        matchConfidence: 'unmatched_wrc_player',
+      };
+    }
+
+    return {
+      matchedDriverId: null,
+      matchConfidence: 'unmatched_unknown',
+      suggestedDriverId: fuzzyDrivers.find(
+        ({ firstName, lastName, racenetName }) =>
+          normalizedName.includes(lastName) ||
+          normalizedName.includes(firstName) ||
+          racenetName.includes(normalizedName)
+      )?.driver.id,
+    };
+  };
+}
+
 export function matchRacenetRowToDriver(
   rawRacenetName: string,
   eaAccountId: string | undefined,
@@ -339,114 +431,160 @@ export function matchRacenetRowToDriver(
   matchConfidence: ParsedRacenetRow['matchConfidence'];
   suggestedDriverId?: string;
 } {
-  const normalizedName = rawRacenetName.trim().toLowerCase();
-  const normalizedEaId = eaAccountId?.trim().toLowerCase();
-
-  // 1. Check exact Racenet Name
-  if (normalizedName && normalizedName !== 'wrc player') {
-    const exactDriver = drivers.find(
-      (d) => d.racenetName.trim().toLowerCase() === normalizedName
-    );
-    if (exactDriver) {
-      return {
-        matchedDriverId: exactDriver.id,
-        matchConfidence: 'exact_racenet',
-      };
-    }
-  }
-
-  // 2. Check EA Account ID (Crucial when driver has EA privacy sharing off -> "WRC Player")
-  if (normalizedEaId) {
-    const eaIdDriver = drivers.find(
-      (d) => d.eaAccountId && d.eaAccountId.trim().toLowerCase() === normalizedEaId
-    );
-    if (eaIdDriver) {
-      return {
-        matchedDriverId: eaIdDriver.id,
-        matchConfidence: 'ea_account_id',
-      };
-    }
-  }
-
-  // 3. Check historical Racenet aliases
-  if (normalizedName && normalizedName !== 'wrc player') {
-    const aliasDriver = drivers.find((d) =>
-      d.racenetAliases.some((alias) => alias.trim().toLowerCase() === normalizedName)
-    );
-    if (aliasDriver) {
-      return {
-        matchedDriverId: aliasDriver.id,
-        matchConfidence: 'alias_match',
-      };
-    }
-  }
-
-  // 4. Unmatched — check if generic "WRC Player" mask or fuzzy suggestion
-  if (normalizedName === 'wrc player') {
-    return {
-      matchedDriverId: null,
-      matchConfidence: 'unmatched_wrc_player',
-    };
-  }
-
-  // Fuzzy substring suggestion for organiser convenience
-  const fuzzySuggestion = drivers.find(
-    (d) =>
-      normalizedName.includes(d.lastName.toLowerCase()) ||
-      normalizedName.includes(d.firstName.toLowerCase()) ||
-      d.racenetName.toLowerCase().includes(normalizedName)
-  );
-
-  return {
-    matchedDriverId: null,
-    matchConfidence: 'unmatched_unknown',
-    suggestedDriverId: fuzzySuggestion?.id,
-  };
+  return createRacenetDriverMatcher(drivers)(rawRacenetName, eaAccountId);
 }
 
-/**
- * Parses an EA Racenet CSV string into structured rows and runs automatic driver matching.
- * Expected columns: Position,RacenetName,EAAccountID,Car,TotalTime,Gap,PowerStageRank,Status
- */
+function parseCsvRecords(csvText: string): string[][] {
+  const text = csvText.replace(/^\uFEFF/, '');
+  const firstLine = text.split(/\r?\n/).find((line) => line.trim()) || '';
+  let quoted = false;
+  let commaCount = 0;
+  let semicolonCount = 0;
+  let tabCount = 0;
+
+  for (let i = 0; i < firstLine.length; i++) {
+    if (firstLine[i] === '"') {
+      if (quoted && firstLine[i + 1] === '"') i++;
+      else quoted = !quoted;
+    } else if (!quoted) {
+      if (firstLine[i] === ',') commaCount++;
+      if (firstLine[i] === ';') semicolonCount++;
+      if (firstLine[i] === '\t') tabCount++;
+    }
+  }
+
+  const delimiter =
+    tabCount > commaCount && tabCount > semicolonCount
+      ? '\t'
+      : semicolonCount > commaCount
+        ? ';'
+        : ',';
+  const records: string[][] = [];
+  let record: string[] = [];
+  let field = '';
+  quoted = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === '"') {
+      if (quoted && text[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (!quoted && char === delimiter) {
+      record.push(field.trim());
+      field = '';
+    } else if (!quoted && (char === '\n' || char === '\r')) {
+      if (char === '\r' && text[i + 1] === '\n') i++;
+      record.push(field.trim());
+      if (record.some((cell) => cell.length > 0)) records.push(record);
+      record = [];
+      field = '';
+    } else {
+      field += char;
+    }
+  }
+
+  record.push(field.trim());
+  if (record.some((cell) => cell.length > 0)) records.push(record);
+  return records;
+}
+
+function normalizeCsvHeader(header: string): string {
+  return header.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/** Parses RaceNet exports by header, then matches rows to registered drivers. */
 export function parseAndMatchRacenetCsv(
   csvText: string,
   drivers: DriverPublic[]
 ): ParsedRacenetRow[] {
-  const lines = csvText
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
+  const records = parseCsvRecords(csvText);
+  const positionHeaders = ['position', 'pos', 'rank', 'overallposition', 'stageposition'];
+  const playerHeaders = [
+    'player',
+    'playername',
+    'racenetname',
+    'driver',
+    'drivername',
+    'displayname',
+    'username',
+  ];
+  const headerRowIndex = records.findIndex((record) => {
+    const headers = record.map(normalizeCsvHeader);
+    return (
+      headers.some((header) => positionHeaders.includes(header)) &&
+      headers.some((header) => playerHeaders.includes(header))
+    );
+  });
+  if (headerRowIndex < 0) return [];
 
-  if (lines.length <= 1) return [];
+  const headers = records[headerRowIndex].map(normalizeCsvHeader);
+  const getColumn = (aliases: string[]) =>
+    headers.findIndex((header) => aliases.includes(header));
+  const positionColumn = getColumn(positionHeaders);
+  const playerColumn = getColumn(playerHeaders);
+  const eaIdColumn = getColumn(['eaaccountid', 'eaid', 'accountid']);
+  const carColumn = getColumn(['car', 'vehicle', 'vehiclename']);
+  const timeColumn = getColumn(['time', 'totaltime', 'eventtime', 'stagetime', 'racetime']);
+  const gapColumn = getColumn(['gap', 'diff', 'diff1st', 'difference1st', 'gaptoleader', 'interval']);
+  const powerStageColumn = getColumn(['powerstagerank', 'powerstageposition', 'psrank']);
+  const statusColumn = getColumn(['status', 'classificationstatus', 'result']);
 
-  const dataLines = lines.slice(1);
-  return dataLines.map((line, idx) => {
-    const cols = line.split(',').map((c) => c.trim());
-    const posNum = parseInt(cols[0] || `${idx + 1}`, 10);
-    const racenetName = cols[1] || 'Unknown Driver';
-    const eaAccountId = cols[2] || undefined;
-    const car = cols[3] || 'Ford Puma Rally1 HYBRID';
-    const totalTime = cols[4] || '00:00:00.000';
-    const gap = cols[5] || '+00:00.000';
-    const psRaw = cols[6] ? parseInt(cols[6], 10) : null;
-    const statusRaw = (cols[7] || 'Finished') as 'Finished' | 'DNF' | 'DNS';
+  const read = (record: string[], column: number) =>
+    column >= 0 ? (record[column] || '').trim() : '';
+  const matchDriver = createRacenetDriverMatcher(drivers);
+  const parsedRows: ParsedRacenetRow[] = [];
+  for (let recordIndex = headerRowIndex + 1; recordIndex < records.length; recordIndex++) {
+    const record = records[recordIndex];
+    const racenetName = read(record, playerColumn);
+    if (!racenetName) continue;
 
-    const matchResult = matchRacenetRowToDriver(racenetName, eaAccountId, drivers);
+    const positionText = read(record, positionColumn);
+    const statusText = read(record, statusColumn) || positionText;
+    const normalizedStatus = statusText.toLowerCase();
+    const status: ParsedRacenetRow['status'] = /\b(dns|did not start)\b/.test(
+      normalizedStatus
+    )
+      ? 'DNS'
+      : /\b(dnf|did not finish|retired|abandoned)\b/.test(normalizedStatus)
+        ? 'DNF'
+        : 'Finished';
+    const parsedPosition = Number.parseInt(positionText.match(/\d+/)?.[0] || '', 10);
+    const position =
+      status === 'Finished'
+        ? Number.isFinite(parsedPosition) && parsedPosition > 0
+          ? parsedPosition
+          : 0
+        : 0;
+    const eaAccountId = read(record, eaIdColumn) || undefined;
+    const car = read(record, carColumn);
+    const totalTime = read(record, timeColumn);
+    const gap = read(record, gapColumn);
+    const rawPowerStageRank = Number.parseInt(read(record, powerStageColumn), 10);
+    const powerStageRank =
+      Number.isFinite(rawPowerStageRank) && rawPowerStageRank >= 1 && rawPowerStageRank <= 5
+        ? rawPowerStageRank
+        : null;
+    const matchResult = matchDriver(racenetName, eaAccountId);
 
-    return {
-      position: isNaN(posNum) ? 0 : posNum,
+    parsedRows.push({
+      position,
       racenetName,
       eaAccountId,
       car,
       totalTime,
       gap,
-      powerStageRank: psRaw && !isNaN(psRaw) && psRaw >= 1 && psRaw <= 5 ? psRaw : null,
-      status: statusRaw === 'DNF' || statusRaw === 'DNS' ? statusRaw : 'Finished',
+      powerStageRank,
+      status,
       matchedDriverId: matchResult.matchedDriverId,
       matchConfidence: matchResult.matchConfidence,
       suggestedDriverId: matchResult.suggestedDriverId,
-    };
-  });
+    });
+  }
+  return parsedRows;
 }
 
 /**

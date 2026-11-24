@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   DriverPrivateVault,
   DriverPublic,
+  ParsedRacenetRow,
   PointsConfig,
   RallyRound,
   RoundResultEntry,
@@ -10,6 +11,7 @@ import {
 import {
   getPositionPoints,
   getPowerStagePoints,
+  parseAndMatchRacenetCsv,
 } from '../utils/championshipEngine';
 import {
   CheckCircle2,
@@ -40,6 +42,25 @@ interface RaceControlViewProps {
   onNavigateToRounds: () => void;
   userProfile: UserProfile | null;
   onOpenAuthModal: () => void;
+}
+
+type CsvImportRow = ParsedRacenetRow & {
+  manualDriverId?: string;
+  manualMatch?: boolean;
+};
+
+function getCsvImportDriverId(row: CsvImportRow): string | null {
+  return row.manualMatch ? row.manualDriverId || null : row.matchedDriverId;
+}
+
+function getCsvImportMatchStatus(
+  row: CsvImportRow
+): RoundResultEntry['matchStatus'] {
+  if (row.manualMatch && row.manualDriverId) return 'resolved';
+  if (row.matchConfidence === 'exact_racenet') return 'exact';
+  if (row.matchConfidence === 'ea_account_id') return 'ea_id';
+  if (row.matchConfidence === 'alias_match') return 'alias';
+  return 'unmatched';
 }
 
 export const RaceControlView: React.FC<RaceControlViewProps> = ({
@@ -93,6 +114,173 @@ export const RaceControlView: React.FC<RaceControlViewProps> = ({
   const effectiveTargetRoundId = targetRoundId || rounds[0]?.id || '';
   const selectedRound = rounds.find((r) => r.id === effectiveTargetRoundId);
   const currentRoundResults = selectedRound?.results || [];
+  const [overallImportRows, setOverallImportRows] = useState<CsvImportRow[]>([]);
+  const [powerStageImportRows, setPowerStageImportRows] = useState<CsvImportRow[]>([]);
+  const [overallCsvName, setOverallCsvName] = useState('');
+  const [powerStageCsvName, setPowerStageCsvName] = useState('');
+  const [csvImportError, setCsvImportError] = useState<string | null>(null);
+  const [csvImportMessage, setCsvImportMessage] = useState<string | null>(null);
+  const [csvImportBusy, setCsvImportBusy] = useState(false);
+
+  const resetCsvImport = () => {
+    setOverallImportRows([]);
+    setPowerStageImportRows([]);
+    setOverallCsvName('');
+    setPowerStageCsvName('');
+    setCsvImportError(null);
+    setCsvImportMessage(null);
+  };
+
+  const handleCsvFilesChange = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const input = event.currentTarget;
+    const files = Array.from(input.files || []);
+    input.value = '';
+    if (files.length === 0) return;
+
+    resetCsvImport();
+    setCsvImportError(null);
+    if (files.length > 2) {
+      setCsvImportError('Choose the Overall export and optional final-stage export (up to 2 CSV files).');
+      return;
+    }
+
+    const oversizedFile = files.find((file) => file.size > 2_000_000);
+    if (oversizedFile) {
+      setCsvImportError(`${oversizedFile.name} is too large. Choose a CSV under 2 MB.`);
+      return;
+    }
+
+    try {
+      const parsedFiles = await Promise.all(
+        files.map(async (file) => ({
+          file,
+          rows: parseAndMatchRacenetCsv(await file.text(), drivers).map((row) => ({
+            ...row,
+            manualMatch: false,
+          })),
+        }))
+      );
+      const invalidFile = parsedFiles.find(({ rows }) => rows.length === 0);
+      if (invalidFile) {
+        setCsvImportError(
+          `${invalidFile.file.name} has no recognizable position and player columns.`
+        );
+        return;
+      }
+
+      const isPowerStageFile = (fileName: string) =>
+        /(?:power[\s_-]*stage|final[\s_-]*stage|stage[\s_-]*\d+)/i.test(fileName);
+      const isOverallFile = (fileName: string) =>
+        /overall|leaderboard/i.test(fileName);
+      let overallFile: (typeof parsedFiles)[number] | undefined = parsedFiles[0];
+      let powerStageFile: (typeof parsedFiles)[number] | undefined = parsedFiles[1];
+      let rolesInferred = false;
+
+      if (parsedFiles.length === 1) {
+        if (isPowerStageFile(parsedFiles[0].file.name) && !isOverallFile(parsedFiles[0].file.name)) {
+          overallFile = undefined;
+          powerStageFile = parsedFiles[0];
+        }
+      } else {
+        const namedPowerStageFiles = parsedFiles.filter(({ file }) =>
+          isPowerStageFile(file.name)
+        );
+        const namedOverallFiles = parsedFiles.filter(({ file }) =>
+          isOverallFile(file.name)
+        );
+        const namedPowerStageFile = namedPowerStageFiles[0];
+        const namedOverallFile = namedOverallFiles[0];
+
+        if (
+          namedPowerStageFiles.length === 1 &&
+          namedOverallFiles.length === 1 &&
+          namedPowerStageFile !== namedOverallFile
+        ) {
+          powerStageFile = namedPowerStageFile;
+          overallFile = namedOverallFile;
+        } else if (namedPowerStageFiles.length === 1) {
+          powerStageFile = namedPowerStageFile;
+          overallFile = parsedFiles.find((entry) => entry !== namedPowerStageFile);
+        } else if (namedOverallFiles.length === 1) {
+          overallFile = namedOverallFile;
+          powerStageFile = parsedFiles.find((entry) => entry !== namedOverallFile);
+        } else {
+          rolesInferred = true;
+        }
+      }
+
+      setOverallImportRows(overallFile?.rows || []);
+      setPowerStageImportRows(powerStageFile?.rows || []);
+      setOverallCsvName(overallFile?.file.name || '');
+      setPowerStageCsvName(powerStageFile?.file.name || '');
+      setCsvImportMessage(
+        !overallFile
+          ? 'Final-stage export loaded. Add the Overall export to save round results.'
+          : rolesInferred
+            ? 'File roles were assigned by picker order. Check the labels below; swap them if needed.'
+            : parsedFiles.length === 2
+              ? 'Overall and final-stage exports loaded.'
+              : 'Overall export loaded.'
+      );
+    } catch {
+      setCsvImportError('Could not read the selected file(s). Choose valid CSV files.');
+    }
+  };
+
+  const handleSwapCsvRoles = () => {
+    setOverallImportRows(powerStageImportRows);
+    setPowerStageImportRows(overallImportRows);
+    setOverallCsvName(powerStageCsvName);
+    setPowerStageCsvName(overallCsvName);
+    setCsvImportMessage('CSV roles swapped. Check the previews before saving.');
+  };
+
+  const overallDriverIds = overallImportRows
+    .map(getCsvImportDriverId)
+    .filter((driverId): driverId is string => Boolean(driverId));
+  const rankedPowerStageRows = powerStageImportRows.filter(
+    (row) => row.position >= 1 && row.position <= 5
+  );
+  const powerStageRanks = new Set(rankedPowerStageRows.map((row) => row.position));
+  const expectedPowerStageRanks = Math.min(
+    5,
+    powerStageImportRows.filter((row) => row.status === 'Finished').length
+  );
+  const invalidPowerStageRanks =
+    powerStageImportRows.length > 0 &&
+    (rankedPowerStageRows.length !== expectedPowerStageRanks ||
+      powerStageRanks.size !== rankedPowerStageRows.length ||
+      Array.from({ length: expectedPowerStageRanks }, (_, index) => index + 1).some(
+        (rank) => !powerStageRanks.has(rank)
+      ));
+  const powerStageDriverIds = rankedPowerStageRows
+    .map(getCsvImportDriverId)
+    .filter((driverId): driverId is string => Boolean(driverId));
+  const hasDuplicateOverallDrivers =
+    new Set(overallDriverIds).size !== overallDriverIds.length;
+  const hasDuplicatePowerStageDrivers =
+    new Set(powerStageDriverIds).size !== powerStageDriverIds.length;
+  const unresolvedOverallCount = overallImportRows.filter(
+    (row) => !getCsvImportDriverId(row)
+  ).length;
+  const unresolvedPowerStageCount = rankedPowerStageRows.filter(
+    (row) => !getCsvImportDriverId(row)
+  ).length;
+  const invalidOverallCount = overallImportRows.filter(
+    (row) => row.status === 'Finished' && row.position < 1
+  ).length;
+  const canSaveCsvImport =
+    Boolean(effectiveTargetRoundId) &&
+    overallImportRows.length > 0 &&
+    unresolvedOverallCount === 0 &&
+    unresolvedPowerStageCount === 0 &&
+    !invalidPowerStageRanks &&
+    invalidOverallCount === 0 &&
+    !hasDuplicateOverallDrivers &&
+    !hasDuplicatePowerStageDrivers &&
+    !csvImportBusy;
 
   const handleAddOrUpdateDriverResult = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,6 +327,93 @@ export const RaceControlView: React.FC<RaceControlViewProps> = ({
         selectedRound?.name || 'Round'
       }.`
     );
+  };
+
+  const handleSaveCsvImport = async () => {
+    if (!canSaveCsvImport || !effectiveTargetRoundId) return;
+    setCsvImportBusy(true);
+    setCsvImportError(null);
+
+    try {
+      const hasPowerStageFile = powerStageImportRows.length > 0;
+      const overallHasPowerStageRanks = overallImportRows.some(
+        (row) => row.powerStageRank !== null
+      );
+      const resultsByDriver = new Map(
+        currentRoundResults.map((result) => [result.driverId, result])
+      );
+      const powerStageByDriver = new Map<string, CsvImportRow>();
+
+      for (const row of rankedPowerStageRows) {
+        const driverId = getCsvImportDriverId(row);
+        if (driverId) powerStageByDriver.set(driverId, row);
+      }
+
+      for (const [driverId, row] of powerStageByDriver) {
+        const existing = resultsByDriver.get(driverId);
+        if (!existing) continue;
+        resultsByDriver.set(driverId, {
+          ...existing,
+          powerStageRank:
+            row.position <= 5 ? row.position : null,
+          powerStageTime: row.totalTime || existing.powerStageTime,
+        });
+      }
+
+      for (const row of overallImportRows) {
+        const driverId = getCsvImportDriverId(row);
+        if (!driverId) continue;
+        const driver = driverMap.get(driverId);
+        if (!driver) continue;
+        const existing = resultsByDriver.get(driverId);
+        const powerStageRow = powerStageByDriver.get(driverId);
+        const powerStageRank = hasPowerStageFile
+          ? powerStageRow && powerStageRow.position <= 5
+            ? powerStageRow.position
+            : null
+          : overallHasPowerStageRanks
+            ? row.powerStageRank
+            : existing?.powerStageRank ?? null;
+
+        resultsByDriver.set(driverId, {
+          driverId,
+          rawRacenetName: row.racenetName,
+          eaAccountId: row.eaAccountId || driver.eaAccountId,
+          position: row.status === 'Finished' ? row.position : 0,
+          status: row.status,
+          totalTime:
+            row.totalTime || (row.status === 'Finished' ? '00:00.000' : row.status),
+          gapToLeader:
+            row.gap || (row.status === 'Finished' ? '+00:00.000' : row.status),
+          powerStageRank,
+          powerStageTime:
+            powerStageRow?.totalTime || existing?.powerStageTime,
+          carUsed: row.car || driver.carMakeModel,
+          stewardPenaltyPoints: existing?.stewardPenaltyPoints || 0,
+          stewardPenaltyNote: existing?.stewardPenaltyNote,
+          matchStatus: getCsvImportMatchStatus(row),
+        });
+      }
+
+      const updatedResults = [...resultsByDriver.values()].sort((a, b) => {
+        if (a.status === 'Finished' && b.status !== 'Finished') return -1;
+        if (a.status !== 'Finished' && b.status === 'Finished') return 1;
+        return a.position - b.position;
+      });
+      await onPublishRoundResults(effectiveTargetRoundId, updatedResults);
+      setCsvImportMessage(
+        `Saved ${overallImportRows.length} RaceNet results for ${selectedRound?.name || 'this round'}.` +
+          (hasPowerStageFile
+            ? ' Final-stage ranks were added for the top five.'
+            : overallHasPowerStageRanks
+              ? ' Power-stage ranks came from the overall CSV.'
+              : ' Existing power-stage ranks were left unchanged.')
+      );
+    } catch {
+      setCsvImportError('Could not save imported results. Please try again.');
+    } finally {
+      setCsvImportBusy(false);
+    }
   };
 
   const handleRemoveResultEntry = async (driverIdToRemove: string) => {
@@ -254,6 +529,300 @@ export const RaceControlView: React.FC<RaceControlViewProps> = ({
       {/* TAB 1: RECORD ROUND RESULTS */}
       {controlTab === 'results' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {rounds.length > 0 && (
+            <section className="lg:col-span-12 bg-[#12161D] border border-[#222731] rounded-lg p-6 space-y-4">
+              <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
+                <div className="space-y-1">
+                  <h2 className="font-display text-xl font-bold uppercase text-[#F4F5F7]">
+                    Import RaceNet Results
+                  </h2>
+                  <p className="text-xs text-[#9CA3AF] max-w-3xl">
+                    Select the Overall export, or choose both exports together. Review driver matches before saving.
+                  </p>
+                </div>
+                <p className="text-xs text-[#F59E0B] max-w-sm">
+                  Automatic RaceNet sync needs an approved account connection. CSV import is available now.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="rc-csv-round-select"
+                    className="block text-xs text-[#9CA3AF] mb-1"
+                  >
+                    Rally Round
+                  </label>
+                  <select
+                    id="rc-csv-round-select"
+                    value={effectiveTargetRoundId}
+                    onChange={(e) => {
+                      setTargetRoundId(e.target.value);
+                      setPublishConfirmMsg(null);
+                      resetCsvImport();
+                    }}
+                    className="w-full px-3 py-2 bg-[#090B0E] border border-[#222731] rounded text-xs font-semibold text-[#F4F5F7]"
+                  >
+                    {rounds.map((round) => (
+                      <option key={round.id} value={round.id}>
+                        Round {round.roundNumber}: {round.name} ({round.status})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="rc-results-csv"
+                    className="block text-xs text-[#9CA3AF] mb-1"
+                  >
+                    RaceNet export(s) (CSV)
+                  </label>
+                  <input
+                    id="rc-results-csv"
+                    type="file"
+                    accept=".csv,text/csv"
+                    multiple
+                    onChange={(e) => void handleCsvFilesChange(e)}
+                    className="w-full px-3 py-2 bg-[#090B0E] border border-[#222731] rounded text-xs text-[#F4F5F7] file:mr-3 file:border-0 file:bg-[#222731] file:px-2 file:py-1 file:text-xs file:text-[#F4F5F7]"
+                  />
+                  <div className="mt-2 space-y-1 text-[11px] text-[#9CA3AF]">
+                    {overallCsvName && <p>Overall: {overallCsvName}</p>}
+                    {powerStageCsvName && <p>Final stage: {powerStageCsvName}</p>}
+                    {overallCsvName && powerStageCsvName && (
+                      <button
+                        type="button"
+                        onClick={handleSwapCsvRoles}
+                        className="text-[#F59E0B] hover:text-[#FBBF24] underline underline-offset-2"
+                      >
+                        Swap file roles
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {csvImportError && (
+                <p role="alert" className="text-xs text-[#FCA5A5]">
+                  {csvImportError}
+                </p>
+              )}
+              {csvImportMessage && (
+                <p role="status" className="text-xs text-[#86EFAC]">
+                  {csvImportMessage}
+                </p>
+              )}
+
+              {overallImportRows.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                    <h3 className="text-sm font-semibold text-[#F4F5F7]">
+                      Overall preview
+                    </h3>
+                    <span className="text-xs text-[#9CA3AF]">
+                      {overallDriverIds.length} of {overallImportRows.length} rows matched
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto border border-[#222731] rounded-lg">
+                    <table className="w-full min-w-[850px] text-left text-xs">
+                      <thead className="bg-[#0D1016] text-[#9CA3AF] uppercase tracking-wider">
+                        <tr>
+                          <th className="px-3 py-2">Pos</th>
+                          <th className="px-3 py-2">RaceNet player</th>
+                          <th className="px-3 py-2 min-w-[240px]">Driver match</th>
+                          <th className="px-3 py-2">Vehicle</th>
+                          <th className="px-3 py-2">Time</th>
+                          <th className="px-3 py-2">Gap</th>
+                          <th className="px-3 py-2">Power stage</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#222731]">
+                        {overallImportRows.map((row, index) => {
+                          const selectedDriverId = row.manualMatch
+                            ? row.manualDriverId || '__unmatched__'
+                            : row.matchedDriverId || '__unmatched__';
+                          return (
+                            <tr key={`overall-${index}-${row.racenetName}`}>
+                              <td className="px-3 py-2 font-mono text-[#F4F5F7]">
+                                {row.status === 'Finished' ? row.position : row.status}
+                              </td>
+                              <td className="px-3 py-2 text-[#F4F5F7]">
+                                {row.racenetName}
+                              </td>
+                              <td className="px-3 py-2">
+                                <select
+                                  aria-label={`Match ${row.racenetName} to a driver`}
+                                  value={selectedDriverId}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    setOverallImportRows((current) =>
+                                      current.map((entry, rowIndex) =>
+                                        rowIndex !== index
+                                          ? entry
+                                          : value === '__automatic__'
+                                            ? {
+                                                ...entry,
+                                                manualMatch: false,
+                                                manualDriverId: undefined,
+                                              }
+                                            : {
+                                                ...entry,
+                                                manualMatch: true,
+                                                manualDriverId:
+                                                  value === '__unmatched__'
+                                                    ? undefined
+                                                    : value,
+                                              }
+                                      )
+                                    );
+                                  }}
+                                  className="w-full px-2 py-1.5 bg-[#090B0E] border border-[#222731] rounded text-xs text-[#F4F5F7]"
+                                >
+                                  <option value="__unmatched__">Choose driver…</option>
+                                  <option value="__automatic__">Use automatic match</option>
+                                  {drivers.map((driver) => (
+                                    <option key={driver.id} value={driver.id}>
+                                      #{driver.number} {driver.fullName} ({driver.racenetName})
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="px-3 py-2 text-[#9CA3AF]">
+                                {row.car || '—'}
+                              </td>
+                              <td className="px-3 py-2 font-mono text-[#F4F5F7]">
+                                {row.totalTime || '—'}
+                              </td>
+                              <td className="px-3 py-2 font-mono text-[#9CA3AF]">
+                                {row.gap || '—'}
+                              </td>
+                              <td className="px-3 py-2 text-[#F59E0B]">
+                                {row.powerStageRank ? `P${row.powerStageRank}` : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {unresolvedOverallCount > 0 && (
+                    <p className="text-xs text-[#FCA5A5]">
+                      Match all {unresolvedOverallCount} remaining row(s) before saving.
+                    </p>
+                  )}
+                  {hasDuplicateOverallDrivers && (
+                    <p className="text-xs text-[#FCA5A5]">
+                      Multiple RaceNet rows point to the same driver. Resolve duplicate matches before saving.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {rankedPowerStageRows.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-semibold text-[#F4F5F7]">
+                    Final-stage top five
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-2">
+                    {rankedPowerStageRows.map((row, index) => {
+                      const selectedDriverId = row.manualMatch
+                        ? row.manualDriverId || '__unmatched__'
+                        : row.matchedDriverId || '__unmatched__';
+                      return (
+                        <div
+                          key={`power-stage-${index}-${row.racenetName}`}
+                          className="p-3 bg-[#0D1016] border border-[#222731] rounded space-y-2"
+                        >
+                          <div className="flex items-center justify-between gap-2 text-xs">
+                            <span className="font-semibold text-[#F59E0B]">
+                              P{row.position} · +{getPowerStagePoints(row.position, 'Finished', pointsConfig)} pts
+                            </span>
+                            <span className="font-mono text-[#9CA3AF]">
+                              {row.totalTime || '—'}
+                            </span>
+                          </div>
+                          <div className="text-xs text-[#F4F5F7]">
+                            {row.racenetName}
+                          </div>
+                          <select
+                            aria-label={`Match power-stage rank ${row.position} ${row.racenetName} to a driver`}
+                            value={selectedDriverId}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setPowerStageImportRows((current) =>
+                                current.map((entry) => {
+                                  if (entry !== row) return entry;
+                                  return value === '__automatic__'
+                                    ? {
+                                        ...entry,
+                                        manualMatch: false,
+                                        manualDriverId: undefined,
+                                      }
+                                    : {
+                                        ...entry,
+                                        manualMatch: true,
+                                        manualDriverId:
+                                          value === '__unmatched__'
+                                            ? undefined
+                                            : value,
+                                      };
+                                })
+                              );
+                            }}
+                            className="w-full px-2 py-1.5 bg-[#090B0E] border border-[#222731] rounded text-xs text-[#F4F5F7]"
+                          >
+                            <option value="__unmatched__">Choose driver…</option>
+                            <option value="__automatic__">Use automatic match</option>
+                            {drivers.map((driver) => (
+                              <option key={driver.id} value={driver.id}>
+                                #{driver.number} {driver.fullName}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {unresolvedPowerStageCount > 0 && (
+                    <p className="text-xs text-[#FCA5A5]">
+                      Match all {unresolvedPowerStageCount} power-stage driver(s) before saving.
+                    </p>
+                  )}
+                  {hasDuplicatePowerStageDrivers && (
+                    <p className="text-xs text-[#FCA5A5]">
+                      Multiple power-stage rows point to the same driver. Resolve duplicate matches before saving.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {invalidPowerStageRanks && (
+                <p className="text-xs text-[#FCA5A5]">
+                  Final-stage CSV must include unique top-five ranks with no gaps before saving.
+                </p>
+              )}
+
+              {invalidOverallCount > 0 && (
+                <p className="text-xs text-[#FCA5A5]">
+                  Finished rows need a valid position before saving.
+                </p>
+              )}
+
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                <button
+                  type="button"
+                  disabled={!canSaveCsvImport}
+                  onClick={() => void handleSaveCsvImport()}
+                  className="px-4 py-2.5 text-xs font-semibold text-white bg-[#E11D48] rounded hover:bg-[#BE123C] disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {csvImportBusy ? 'Saving results…' : 'Save imported results'}
+                </button>
+                <p className="text-[11px] text-[#9CA3AF]">
+                  Existing steward penalties stay attached. Drivers missing from the CSV are left unchanged.
+                </p>
+              </div>
+            </section>
+          )}
           <form
             onSubmit={handleAddOrUpdateDriverResult}
             className="lg:col-span-5 bg-[#12161D] border border-[#222731] rounded-lg p-6 space-y-4"
@@ -285,30 +854,6 @@ export const RaceControlView: React.FC<RaceControlViewProps> = ({
               </div>
             ) : (
               <>
-                <div>
-                  <label
-                    htmlFor="rc-round-select"
-                    className="block text-xs text-[#9CA3AF] mb-1"
-                  >
-                    Rally Round
-                  </label>
-                  <select
-                    id="rc-round-select"
-                    value={effectiveTargetRoundId}
-                    onChange={(e) => {
-                      setTargetRoundId(e.target.value);
-                      setPublishConfirmMsg(null);
-                    }}
-                    className="w-full px-3 py-2 bg-[#090B0E] border border-[#222731] rounded text-xs font-semibold text-[#F4F5F7]"
-                  >
-                    {rounds.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        Round {r.roundNumber}: {r.name} ({r.status})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
                 <div>
                   <label
                     htmlFor="rc-driver-select"
